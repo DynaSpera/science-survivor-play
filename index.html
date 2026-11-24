@@ -149,6 +149,13 @@ const QUIZ_DAMAGE_MULTIPLIER = .85;
 const MAX_WEAPON_LEVEL = 4;
 const WEAPON_SLOTS = 8;
 const PASSIVE_SLOTS = 3;
+const LEAF_BASE_ANGULAR_SPEED = 2.9;
+const LEAF_LEVEL_STATS = [
+  {count:3,radius:37,rotationPercent:100},
+  {count:4,radius:42,rotationPercent:112},
+  {count:5,radius:47,rotationPercent:124},
+  {count:6,radius:52,rotationPercent:136}
+];
 // 햇살나무는 일반 캐릭터 이동 속도의 10%, 기본 회수 반경의 4배로 시작한다.
 const NORMAL_MOVE = 180;
 const NORMAL_PICKUP = 77;
@@ -373,9 +380,9 @@ function help(from) {
     ["이동","방향키·WASD 또는 전투 화면을 눌러 드래그하세요. 햇살나무는 아주 조금씩 움직이고, 멈춰 있으면 뿌리를 내립니다."],
     ["빛과 양분","빛이 가까이 지나갈 때 양분을 모읍니다. 뿌리 상태에서 더 빠르게 채워집니다."],
     ["칩과 레벨업","적이 떨어뜨린 칩과 연구 상자는 넓은 범위에서 뿌리 쪽으로 끌려옵니다."],
-    ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
+    ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선을 강화하면 잎이 늘고 더 넓고 빠르게 돕니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
     ["장비",`무기 ${WEAPON_SLOTS}칸, 패시브 ${PASSIVE_SLOTS}칸입니다. 장착한 장비는 레벨업 때 계속 강화합니다. 한 판 안에서 공용 강화와 무기 진화에 쓸 패시브를 골라 조합하세요.`],
-    ["라운드와 문제","1분 30초씩 세 라운드입니다. Lv. 2부터 두 레벨마다 짧은 문제가 나오고, 라운드 끝에는 자료 해석 문제가 나옵니다. 오답이면 이후 전투 15초 동안 무기 피해가 15% 줄어듭니다."]
+    ["라운드와 문제","1분 30초씩 세 라운드입니다. Lv. 2부터 두 레벨마다 짧은 문제가 나오고, 라운드 끝에는 자료 해석 문제가 나옵니다. 숫자 키 1~3으로 보기를 고를 수 있습니다. 오답이면 이후 전투 15초 동안 무기 피해가 15% 줄어듭니다."]
   ]){
     const item=add("li","",list);
     add("strong",title,item);
@@ -452,7 +459,11 @@ function upgrade() {
       const level=isWeapon?(game.weaponSlots[key]?.level||0):passiveLevel(key);
       title=item.name+" · Lv. "+(level+1);
       if(isWeapon){
-        const effect=level===0?item.detail:key==="leaf"?"잎 피해와 회전 반경 증가":"공격 피해 증가 · 공격 간격 단축";
+        let effect=level===0?item.detail:"공격 피해 증가 · 공격 간격 단축";
+        if(key==="leaf" && level>0){
+          const current=LEAF_LEVEL_STATS[level-1], next=LEAF_LEVEL_STATS[level];
+          effect=`잎 ${current.count} → ${next.count}장 · 기본 반경 ${current.radius} → ${next.radius} · 회전 속도 ${current.rotationPercent}% → ${next.rotationPercent}% · 피해 증가`;
+        }
         detail=effect+" · 진화 짝 "+passives[item.passive].name;
       } else {
         detail=item.detail[level]+(key==="water"?" · 태양 수관 진화":"");
@@ -521,9 +532,13 @@ function quiz(atRoundEnd) {
       for(const value of values) add("td",value,row);
     }
   }
-  const cards=shuffled(q.options.map((text,index)=>({text,index}))).map(({text,index})=>({
-    index,node:button(text,()=>answer(index),{style:"choose"})
-  }));
+  const cards=shuffled(q.options.map((text,index)=>({text,index}))).map(({text,index},position)=>{
+    const key=String(position+1);
+    const node=button(`${key}. ${text}`,()=>answer(index),{style:"choose"});
+    node.dataset.quizKey=key;
+    node.setAttribute("aria-keyshortcuts",key);
+    return {index,node};
+  });
   cards[0].node.focus();
   function answer(index) {
     if(state!=="quiz") return;
@@ -863,14 +878,15 @@ function moveEnemies(dt) {
 
 function leaves() {
   const p=game.player, weapon=game.weaponSlots.leaf;
+  const stats=LEAF_LEVEL_STATS[weapon.level-1];
   const reach=1+bonus("lens");
-  const radius=(37+(weapon.level-1)*4)*(p.rooted?1.15:1)*(p.rooted&&p.lit?1.2:1);
+  const radius=stats.radius*(p.rooted?1.15:1)*(p.rooted&&p.lit?1.2:1);
   const ring=(count,spread,phase,outer)=>Array.from({length:count},(_,i)=>{
     const angle=phase+i*TAU/count;
     return {...movePoint(p,angle,spread),angle,outer};
   });
   return [
-    ...ring(3,radius*reach,p.angle,false),
+    ...ring(stats.count,radius*reach,p.angle,false),
     ...(weapon.evolved && p.fuel>0?ring(5,(radius+57)*reach,-p.angle*.75,true):[])
   ];
 }
@@ -1136,7 +1152,8 @@ function tick(dt) {
   }
   movePlayer(dt);
   // 네 바퀴마다 초기화하면 3/4 속도로 역회전하는 바깥 잎도 같은 위상으로 이어진다.
-  game.player.angle=(game.player.angle+2.9*dt)%(TAU*4);
+  const rotation=LEAF_LEVEL_STATS[game.weaponSlots.leaf.level-1].rotationPercent/100;
+  game.player.angle=(game.player.angle+LEAF_BASE_ANGULAR_SPEED*rotation*dt)%(TAU*4);
   moveEnemies(dt);
   const orbit=leaves();
   orbitStrike(orbit);
@@ -1573,7 +1590,14 @@ function drawFrame(now) {
 
 function keyValue(event){return event.key.length===1?event.key.toLowerCase():event.key;}
 window.addEventListener("keydown",event=>{
-  if(state!=="run"||event.ctrlKey||event.altKey||event.metaKey) return;
+  if(event.ctrlKey||event.altKey||event.metaKey) return;
+  if(state==="quiz"){
+    if(event.repeat||event.isComposing||!/^[1-3]$/.test(event.key)) return;
+    const choice=Array.from(content.children).find(node=>node.dataset.quizKey===event.key);
+    if(choice){event.preventDefault();choice.click();}
+    return;
+  }
+  if(state!=="run") return;
   const key=keyValue(event);
   if(key==="Escape"||key==="p"){
     event.preventDefault();
