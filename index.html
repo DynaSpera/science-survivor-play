@@ -16,6 +16,7 @@ button:disabled{opacity:.55;cursor:default}
 [hidden]{display:none!important}
 main{max-width:1560px;padding:clamp(10px,2.5vw,32px);margin:auto}
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}
+.header-controls{display:flex;gap:6px;flex-shrink:0}
 .brand{display:flex;align-items:center;gap:12px}
 .mark{width:35px;height:35px;display:grid;place-items:center;background:var(--leaf);color:#193122;font-size:23px;font-weight:bold;transform:rotate(-8deg);border-radius:9px}
 .brand strong{display:block;font-size:20px;line-height:1.2}
@@ -35,6 +36,9 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;ma
 #fuelBar span{background:var(--sun)}
 .arena{position:relative;height:clamp(390px,68svh,790px);overflow:hidden;background:#263a2d;isolation:isolate}
 canvas{display:block;width:100%;height:100%;touch-action:none}
+.minimap{position:absolute;top:12px;right:12px;width:clamp(120px,20%,176px);margin:0;padding:5px;border:1px solid #687e70;border-radius:8px;background:#14231d;box-shadow:0 2px 8px #0006;pointer-events:none}
+.minimap figcaption{padding:0 2px 3px;color:#e2eade;font-size:11px;font-weight:750}
+.minimap canvas{height:auto;border:1px solid #425a4e}
 .cover{position:absolute;inset:0;display:flex;align-items:center;padding:clamp(22px,5vw,70px);background:linear-gradient(90deg,#101c17f2 8%,#111e18cf 41%,#15231b08 78%)}
 .cover-inner{max-width:440px}
 .cover h1{margin:0;font-size:clamp(50px,9vw,124px);font-weight:950;letter-spacing:-.105em;line-height:1.04;color:#f8f2d3}
@@ -63,6 +67,7 @@ dialog{width:min(550px,calc(100vw - 24px));max-height:calc(100svh - 26px);color:
 dialog::backdrop{background:#09150fd2}
 dialog h2{margin:0 0 12px;font-size:clamp(22px,4.5vw,31px);line-height:1.3}
 dialog p{margin:0 0 12px}
+.world-map{height:auto;margin:0 0 14px;border:1px solid #687e70;border-radius:6px}
 .quiz-data{width:100%;margin:8px 0 14px;border-collapse:collapse;font-size:clamp(12px,3vw,14px);font-variant-numeric:tabular-nums}
 .quiz-data caption{caption-side:bottom;color:var(--muted);text-align:left;font-size:12px;padding-top:5px}
 .quiz-data :is(th,td){padding:5px 6px;border:1px solid var(--line);text-align:center}
@@ -83,7 +88,9 @@ dialog p{margin:0 0 12px}
 }
 @media(max-width:560px){
   header{margin-bottom:7px}.brand strong{font-size:16px}
+  .header-controls .button{padding-inline:9px}
   .arena{height:clamp(335px,66svh,680px)}
+  .minimap{top:8px;right:8px;width:clamp(104px,28%,132px)}
   .hud{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);padding:7px 9px;gap:8px}.phase,.bar-label{font-size:11px}
   .cover{align-items:flex-end;padding-bottom:23px;background:linear-gradient(0deg,#111e18f5 5%,#111e18bd 49%,#15231b03 90%)}
   .cover h1{font-size:clamp(53px,15vw,80px)}
@@ -95,7 +102,10 @@ dialog p{margin:0 0 12px}
 <main>
   <header>
     <div class="brand"><div class="mark" aria-hidden="true">♣</div><div><strong>사이언스 서바이버</strong><small>식물과 에너지</small></div></div>
-    <button id="pause" class="button" type="button" disabled>일시정지</button>
+    <div class="header-controls">
+      <button id="mapButton" class="button" type="button" aria-keyshortcuts="M" disabled>지도</button>
+      <button id="pause" class="button" type="button" disabled>일시정지</button>
+    </div>
   </header>
   <div class="layout">
     <section class="board" aria-label="햇살나무 전투 구역">
@@ -106,6 +116,10 @@ dialog p{margin:0 0 12px}
       </div>
       <div class="arena">
         <canvas id="field" aria-label="온실 전투 지도"></canvas>
+        <figure id="minimapPanel" class="minimap" hidden>
+          <figcaption>미니맵</figcaption>
+          <canvas id="minimap" width="416" height="288" role="img" aria-label="현재 전투 화면에 있는 햇살나무, 드론, 오브젝트와 빛 구역"></canvas>
+        </figure>
         <div id="bossBar" class="boss" hidden><div id="bossName"></div><div id="bossHealth" class="progress" role="progressbar" aria-label="보스 체력"><span></span></div></div>
         <section class="cover" id="cover">
           <div class="cover-inner">
@@ -138,6 +152,8 @@ dialog p{margin:0 0 12px}
 const $ = id => document.getElementById(id);
 const canvas = $("field");
 const paint = canvas.getContext("2d", {alpha:false});
+const map = $("minimap");
+const mapPaint = map.getContext("2d", {alpha:false});
 const modal = $("modal");
 const content = $("modalContent");
 const TAU = 2 * Math.PI;
@@ -335,6 +351,7 @@ function start() {
     spawnId:0,events:new Set(),boss:null
   };
   $("cover").hidden=true;
+  $("minimapPanel").hidden=false;
   resume();
 }
 
@@ -342,6 +359,7 @@ function show(title,mode) {
   resetInput();
   state=mode;
   $("pause").disabled=true;
+  $("mapButton").disabled=true;
   $("modalTitle").textContent=title;
   content.replaceChildren();
   if(!modal.open) modal.showModal();
@@ -353,6 +371,7 @@ function resume() {
   state="run";
   if(modal.open) modal.close();
   $("pause").disabled=false;
+  $("mapButton").disabled=false;
   $("pause").focus({preventScroll:true});
   paintHud(true);
 }
@@ -379,6 +398,7 @@ function help(from) {
   for(const [title,detail] of [
     ["이동","방향키·WASD 또는 전투 화면을 눌러 드래그하세요. 햇살나무는 아주 조금씩 움직이고, 멈춰 있으면 뿌리를 내립니다."],
     ["빛과 양분","빛이 가까이 지나갈 때 양분을 모읍니다. 뿌리 상태에서 더 빠르게 채워집니다."],
+    ["지도","전투 미니맵의 초록 점은 햇살나무, 빨간 점은 드론입니다. 차광 드론과 보스는 마름모, 오브젝트는 작은 사각형으로 보입니다. M 키나 지도 버튼을 누르면 온실 전체에서 햇살나무의 위치를 볼 수 있습니다."],
     ["칩과 레벨업","적이 떨어뜨린 칩과 연구 상자는 넓은 범위에서 뿌리 쪽으로 끌려옵니다."],
     ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선을 강화하면 잎이 늘고 더 넓고 빠르게 돕니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
     ["장비",`무기 ${WEAPON_SLOTS}칸, 패시브 ${PASSIVE_SLOTS}칸입니다. 장착한 장비는 레벨업 때 계속 강화합니다. 한 판 안에서 공용 강화와 무기 진화에 쓸 패시브를 골라 조합하세요.`],
@@ -395,6 +415,7 @@ function backToCover() {
   modal.close();
   state="cover";
   game=null;
+  $("minimapPanel").hidden=true;
   $("help").focus();
 }
 
@@ -404,6 +425,30 @@ function pauseMenu() {
   button("계속하기",resume,{parent:actions,style:"primary"}).focus();
   button("도움말",()=>help("pause"),{parent:actions});
   button("처음부터",start,{parent:actions});
+}
+
+function openMap() {
+  if(state!=="run") return;
+  show("온실 전체 지도","map");
+  const overview=add("canvas","",content,"world-map");
+  overview.width=520;
+  overview.height=360;
+  overview.setAttribute("role","img");
+  overview.setAttribute("aria-label","온실 전체와 햇살나무의 위치");
+
+  const overviewPaint=overview.getContext("2d",{alpha:false});
+  overviewPaint.fillStyle="#1a2b23";
+  overviewPaint.fillRect(0,0,overview.width,overview.height);
+  overviewPaint.strokeStyle="#779481";
+  overviewPaint.lineWidth=3;
+  overviewPaint.strokeRect(1.5,1.5,overview.width-3,overview.height-3);
+  drawMapPlayer(overviewPaint,game.player.x*overview.width/WORLD.w,game.player.y*overview.height/WORLD.h);
+  button("닫기",closeMap,{style:"primary"}).focus();
+}
+
+function closeMap() {
+  resume();
+  $("mapButton").focus({preventScroll:true});
 }
 
 const passiveLevel = id => game.passiveSlots[id]||0;
@@ -1552,6 +1597,69 @@ function drawBattle() {
   }
 }
 
+function drawMapPlayer(ctx,x,y) {
+  ctx.beginPath();
+  ctx.arc(x,y,9,0,TAU);
+  ctx.fillStyle="#bdf278";
+  ctx.fill();
+  ctx.strokeStyle="#101d16";
+  ctx.lineWidth=3;
+  ctx.stroke();
+}
+
+function drawMinimap(c) {
+  const width=Math.min(c.w,WORLD.w-c.x), height=Math.min(c.h,WORLD.h-c.y);
+  const scale=Math.min(map.width/width,map.height/height);
+  const left=(map.width-width*scale)/2, top=(map.height-height*scale)/2;
+  const xOnMap=x=>left+(x-c.x)*scale;
+  const yOnMap=y=>top+(y-c.y)*scale;
+
+  mapPaint.fillStyle="#14231d";
+  mapPaint.fillRect(0,0,map.width,map.height);
+  mapPaint.save();
+  mapPaint.beginPath();
+  mapPaint.rect(left,top,width*scale,height*scale);
+  mapPaint.clip();
+  mapPaint.fillStyle="#1a2b23";
+  mapPaint.fillRect(left,top,width*scale,height*scale);
+  mapPaint.fillStyle="#bda34465";
+  mapPaint.fillRect(xOnMap(sunAt(game.time)-LIGHT_WIDTH/2),top,LIGHT_WIDTH*scale,height*scale);
+  mapPaint.fillStyle="#779481";
+  for(const [x,y] of LANDMARKS) mapPaint.fillRect(xOnMap(x-33),yOnMap(y-12),66*scale,36*scale);
+
+  const visibleEnemies=game.enemies.filter(enemy=>enemy.hp>0 &&
+    enemy.x>=c.x && enemy.x<=c.x+width && enemy.y>=c.y && enemy.y<=c.y+height);
+  mapPaint.fillStyle="#ff766c";
+  mapPaint.beginPath();
+  for(const enemy of visibleEnemies){
+    if(enemy.type==="shade" || enemy.type==="final") continue;
+    const x=xOnMap(enemy.x),y=yOnMap(enemy.y);
+    mapPaint.moveTo(x+5,y);
+    mapPaint.arc(x,y,5,0,TAU);
+  }
+  mapPaint.fill();
+
+  for(const enemy of visibleEnemies){
+    if(enemy.type!=="shade" && enemy.type!=="final") continue;
+    const boss=enemy.type==="final";
+    const x=xOnMap(enemy.x),y=yOnMap(enemy.y),r=boss?15:10;
+    mapPaint.beginPath();
+    mapPaint.moveTo(x,y-r);
+    mapPaint.lineTo(x+r,y);
+    mapPaint.lineTo(x,y+r);
+    mapPaint.lineTo(x-r,y);
+    mapPaint.closePath();
+    mapPaint.fillStyle=boss?"#ee6558":"#ffbf78";
+    mapPaint.fill();
+    mapPaint.strokeStyle=boss?"#ffefd2":"#18251f";
+    mapPaint.lineWidth=3;
+    mapPaint.stroke();
+  }
+
+  drawMapPlayer(mapPaint,xOnMap(game.player.x),yOnMap(game.player.y));
+  mapPaint.restore();
+}
+
 function drawFrame(now) {
   const dt=Math.min(.05,(now-(lastFrame||now))/1000);
   lastFrame=now;
@@ -1565,6 +1673,7 @@ function drawFrame(now) {
     scene(c,game?.time??Math.min(20,coverTime/3));
     if(game){
       drawBattle();
+      drawMinimap(c);
     } else {
       const foreground={x:c.x+c.w*(view.w<=560?.54:.71),y:c.y+c.h*(view.w<=560?.30:.50)};
       outlinedCircle(foreground,116,"#e8d99562",2);
@@ -1591,6 +1700,14 @@ function drawFrame(now) {
 function keyValue(event){return event.key.length===1?event.key.toLowerCase():event.key;}
 window.addEventListener("keydown",event=>{
   if(event.ctrlKey||event.altKey||event.metaKey) return;
+  const key=keyValue(event);
+  if(key==="m" && (state==="run" || state==="map")){
+    if(event.repeat||event.isComposing) return;
+    event.preventDefault();
+    if(state==="map") closeMap();
+    else openMap();
+    return;
+  }
   if(state==="quiz"){
     if(event.repeat||event.isComposing||!/^[1-3]$/.test(event.key)) return;
     const choice=Array.from(content.children).find(node=>node.dataset.quizKey===event.key);
@@ -1598,7 +1715,6 @@ window.addEventListener("keydown",event=>{
     return;
   }
   if(state!=="run") return;
-  const key=keyValue(event);
   if(key==="Escape"||key==="p"){
     event.preventDefault();
     pauseMenu();
@@ -1615,6 +1731,7 @@ document.addEventListener("visibilitychange",()=>{if(document.hidden && state===
 modal.addEventListener("cancel",event=>{
   event.preventDefault();
   if(state==="pause") resume();
+  else if(state==="map") closeMap();
   else if(state==="help") game?pauseMenu():backToCover();
 });
 canvas.addEventListener("pointerdown",event=>{
@@ -1638,6 +1755,7 @@ for(const key of ["pointerup","pointercancel","lostpointercapture"]){
 
 $("start").addEventListener("click",start);
 $("help").addEventListener("click",()=>help("cover"));
+$("mapButton").addEventListener("click",openMap);
 $("pause").addEventListener("click",pauseMenu);
 slots("weapons",[[weapons.leaf.name,"Lv. 1"]],WEAPON_SLOTS);
 slots("passives",[],PASSIVE_SLOTS);
