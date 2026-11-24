@@ -56,6 +56,8 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 .slots li{padding:6px 8px;border:1px solid var(--line);border-radius:6px;min-height:34px;font-size:14px;display:flex;justify-content:space-between;gap:7px}
 .slots small,.empty{color:var(--muted);font-size:13px}
 #loot{margin:15px 0 1px;font-size:14px;color:var(--sun)}
+#training{font-size:14px;color:var(--leaf)}
+#penalty{color:var(--danger);font-weight:750}
 dialog{width:min(550px,calc(100vw - 24px));max-height:calc(100svh - 26px);color:var(--text);background:#1b3027;border:1px solid #718879;border-radius:14px;padding:clamp(18px,4vw,30px);box-shadow:0 16px 80px #0007}
 dialog::backdrop{background:#09150fd2}
 dialog h2{margin:0 0 12px;font-size:clamp(22px,4.5vw,31px);line-height:1.3}
@@ -94,7 +96,7 @@ dialog p{margin:0 0 12px}
     <section class="board" aria-label="햇살나무 전투 구역">
       <div class="hud">
         <div><div class="bar-label"><span>체력</span><span id="healthText">125 / 125</span></div><div id="healthBar" class="progress" role="progressbar" aria-label="체력" aria-valuemax="125" aria-valuenow="125"><span style="width:100%"></span></div></div>
-        <div class="phase"><div id="clock" class="clock">5:00</div><strong id="phase">기본 5분</strong></div>
+        <div class="phase"><div id="clock" class="clock">1:30</div><strong id="phase">라운드 1 / 3</strong></div>
         <div><div class="bar-label"><span>저장 양분</span><span id="fuelText">0 / 100</span></div><div id="fuelBar" class="progress" role="progressbar" aria-label="저장 양분" aria-valuemax="100" aria-valuenow="0"><span></span></div></div>
       </div>
       <div class="arena">
@@ -112,10 +114,11 @@ dialog p{margin:0 0 12px}
     </section>
     <aside class="inventory" aria-label="장착한 장비">
       <h2>무기</h2>
-      <ul id="weapons" class="slots"><li>잎사귀 나선 <small>Lv. 1</small></li></ul>
+      <ul id="weapons" class="slots"><li>잎사귀 나선 <small>Lv. 1</small></li><li class="empty">빈 슬롯</li><li class="empty">빈 슬롯</li></ul>
       <h2>패시브</h2>
-      <ul id="passives" class="slots"><li class="empty">빈 슬롯</li><li class="empty">빈 슬롯</li></ul>
+      <ul id="passives" class="slots"><li class="empty">빈 슬롯</li><li class="empty">빈 슬롯</li><li class="empty">빈 슬롯</li></ul>
       <div id="loot">연구 상자 0개</div>
+      <div id="training" hidden></div>
     </aside>
   </div>
 </main>
@@ -134,11 +137,12 @@ const modal = $("modal");
 const content = $("modalContent");
 const TAU = 2 * Math.PI;
 const WORLD = {w:1664,h:1152};
-const BASIC_END = 300;
-const EXTENDED_END = 600;
+const ROUND_SECONDS = 90;
+const ROUND_COUNT = 3;
+const QUIZ_DAMAGE = 10;
 const MAX_WEAPON_LEVEL = 4;
 const WEAPON_SLOTS = 3;
-const PASSIVE_SLOTS = 2;
+const PASSIVE_SLOTS = 3;
 // 햇살나무는 일반 캐릭터 이동 속도의 10%, 기본 회수 반경의 4배로 시작한다.
 const NORMAL_MOVE = 180;
 const NORMAL_PICKUP = 77;
@@ -146,6 +150,12 @@ const TREE = {speed:NORMAL_MOVE*.10, pickup:NORMAL_PICKUP*4, hitRadius:13, maxHp
 const PALETTE = {leaf:"#cee982",sun:"#f5d677",ink:"#e8eee1",red:"#f68872",mint:"#78efd1"};
 const SUN_PATH = [[0,.5],[13,.5],[27,.79],[39,.5],[52,.5],[66,.21],[80,.5]];
 const LIGHT_WIDTH = 405;
+const LANDMARKS = [
+  [692,553,"planter"],[938,549,"tank"],[836,745,"bench"],[798,449,"planter"],
+  [665,704,"bench"],[1002,709,"planter"],[478,396,"tank"],[1208,436,"planter"],
+  [492,812,"planter"],[1240,803,"bench"],[315,576,"bench"],[1376,565,"tank"],
+  [618,216,"planter"],[1040,221,"bench"],[658,966,"tank"],[1035,963,"planter"]
+];
 const motion = matchMedia("(prefers-reduced-motion: reduce)");
 
 const weapons = {
@@ -176,19 +186,18 @@ const passives = {
 };
 
 const questions = [
-  {at:53, title:"광합성", text:"햇살나무가 빛을 받아 양분을 만들어요. 실제 식물은 광합성에 무엇을 이용하나요?", options:["빛, 물, 이산화 탄소","빛, 물, 산소","산소, 이산화 탄소, 이미 만든 녹말"], right:0, explain:"식물은 빛에너지를 이용해 물과 이산화 탄소로 양분을 만들고, 이 과정에서 산소를 방출합니다."},
-  {at:146, title:"세포호흡", text:"빛이 드는 낮과 어두운 밤에 식물의 세포호흡은 언제 일어나나요?", options:["낮에만","밤에만","낮과 밤 모두"], right:2, explain:"식물은 낮과 밤 모두 세포호흡을 합니다. 양분에 저장된 에너지를 생명 활동에 이용합니다."},
-  {at:222, title:"양분의 저장", text:"광합성으로 만든 당의 일부는 식물 안에서 어떤 형태로 저장될 수 있나요?", options:["산소","녹말","이산화 탄소"], right:1, explain:"식물은 광합성으로 만든 당의 일부를 녹말로 바꾸어 저장할 수 있습니다."}
+  {title:"광합성", text:"햇살나무가 빛을 받아 양분을 만들어요. 실제 식물은 광합성에 무엇을 이용하나요?", options:["빛, 물, 이산화 탄소","빛, 물, 산소","산소, 이산화 탄소, 이미 만든 녹말"], right:0, explain:"식물은 빛에너지를 이용해 물과 이산화 탄소로 양분을 만들고, 이 과정에서 산소를 방출합니다."},
+  {title:"세포호흡", text:"빛이 드는 낮과 어두운 밤에 식물의 세포호흡은 언제 일어나나요?", options:["낮에만","밤에만","낮과 밤 모두"], right:2, explain:"식물은 낮과 밤 모두 세포호흡을 합니다. 양분에 저장된 에너지를 생명 활동에 이용합니다."},
+  {title:"양분의 저장", text:"광합성으로 만든 당의 일부는 식물 안에서 어떤 형태로 저장될 수 있나요?", options:["산소","녹말","이산화 탄소"], right:1, explain:"식물은 광합성으로 만든 당의 일부를 녹말로 바꾸어 저장할 수 있습니다."}
 ];
 
 const enemyTypes = {
   scout:{title:"일반 드론",hp:20,speed:55,r:10,damage:8,xp:1,color:"#edae78"},
   shot:{title:"사격 드론",hp:37,speed:45,r:12,damage:9,xp:3,color:"#cda2ed"},
-  dash:{title:"돌진 드론",hp:39,speed:63,r:12,damage:14,xp:3,color:"#f08d71"},
+  dash:{title:"돌진 드론",hp:39,speed:63,r:12,damage:12,xp:3,color:"#f08d71"},
   armor:{title:"중장갑 드론",hp:81,speed:38,r:17,damage:17,xp:6,color:"#ecc17a"},
   shade:{title:"차광 드론",hp:195,speed:37,r:23,damage:16,xp:12,color:"#b6a6f2"},
-  boss:{title:"온실 감시기",hp:425,speed:34,r:29,damage:20,xp:0,color:"#f48677"},
-  final:{title:"차광 통제기",hp:700,speed:38,r:33,damage:24,xp:0,color:"#fa997b"}
+  final:{title:"차광 통제기",hp:510,speed:36,r:31,damage:20,xp:30,color:"#fa997b"}
 };
 
 let game = null;
@@ -256,8 +265,8 @@ function start() {
   const player={x:WORLD.w*.5,y:WORLD.h*.53,hp:TREE.maxHp,hit:0,fuel:0,
     walking:0,rootTime:0,rooted:false,lit:true,angle:0,moveAngle:0};
   game={
-    player,time:0,level:1,xp:0,chips:0,kills:0,chests:0,spawnAt:.15,stage:"basic",
-    basicCleared:false,basicBossDown:false,finalBossDown:false,extensionEntered:false,blocks:0,
+    player,time:0,round:1,roundsCleared:0,level:1,xp:0,chips:0,kills:0,chests:0,spawnAt:.15,
+    finalBossDown:false,blocks:0,training:0,
     weaponSlots:{leaf:{level:1,evolved:false,next:0}},passiveSlots:{},
     enemies:[],drops:[],shots:[],waves:[],effects:[],hazards:[],outlines:[],results:[],
     spawnId:0,events:new Set(),boss:null
@@ -309,7 +318,8 @@ function help(from) {
     ["빛과 양분","빛이 가까이 지나갈 때 양분을 모읍니다. 뿌리 상태에서 더 빠르게 채워집니다."],
     ["칩과 레벨업","적이 떨어뜨린 칩과 연구 상자는 넓은 범위에서 뿌리 쪽으로 끌려옵니다."],
     ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
-    ["도전 시간","기본 5분을 클리어하면 결과를 보거나 5분을 더 도전할 수 있습니다."]
+    ["장비","무기와 패시브는 각각 세 칸입니다. 장착한 장비는 레벨업 때 계속 강화할 수 있습니다."],
+    ["라운드와 문제","1분 30초씩 세 라운드입니다. 각 라운드 끝의 문제를 틀리면 체력 10이 줄어듭니다."]
   ]){
     const item=add("li","",list);
     add("strong",title,item);
@@ -336,7 +346,7 @@ function pauseMenu() {
 const passiveLevel = id => game.passiveSlots[id]||0;
 const bonus = id => passives[id].bonus[passiveLevel(id)-1]||0;
 const capacity = () => [100,120,135,150][passiveLevel("starch")];
-const nextXp = () => 5+Math.floor((game.level-1)*2.65);
+const nextXp = () => 5+Math.floor((game.level-1)*3.25)+Math.max(0,game.level-7)*5;
 const weaponLabel = (key,w) => w.evolved?weapons[key].evolved:weapons[key].name;
 const readyToEvolve = () => Object.entries(game.weaponSlots)
   .filter(([key,w])=>!w.evolved && w.level>=MAX_WEAPON_LEVEL && passiveLevel(weapons[key].passive)>0)
@@ -344,65 +354,59 @@ const readyToEvolve = () => Object.entries(game.weaponSlots)
 
 function chooseUpgrades() {
   const owned=Object.keys(game.weaponSlots);
-  const allWeapons=Object.keys(weapons)
-    .filter(key=>game.weaponSlots[key] ? game.weaponSlots[key].level<MAX_WEAPON_LEVEL : owned.length<WEAPON_SLOTS)
+  const haveSpace=Object.keys(game.passiveSlots).length<PASSIVE_SLOTS;
+  const weaponCards=Object.keys(weapons)
+    .filter(key=>game.weaponSlots[key]?game.weaponSlots[key].level<MAX_WEAPON_LEVEL:owned.length<WEAPON_SLOTS)
     .map(key=>({kind:"weapon",key}));
-  const allPassives=Object.entries(passives)
-    .filter(([key,item])=>passiveLevel(key)<3 && (!item.weapon || owned.includes(item.weapon)))
+  const passiveCards=Object.entries(passives)
+    .filter(([key,item])=>passiveLevel(key)<3&&(passiveLevel(key)>0||haveSpace)&&(!item.weapon||owned.includes(item.weapon)))
     .map(([key])=>({kind:"passive",key}));
-  const leaf=game.weaponSlots.leaf;
-  const guaranteed=[];
-  if(leaf.level>=3 && !leaf.evolved && !passiveLevel("water")){
-    guaranteed.push({kind:"passive",key:"water"});
-  }
-  const preferred=shuffled(allWeapons.filter(item=>owned.includes(item.key)));
-  if(preferred.length){
-    const leafCard=preferred.find(item=>item.key==="leaf");
-    guaranteed.push(game.time<165 && leafCard?leafCard:preferred[0]);
-  }
-  return [...guaranteed,...shuffled([...allWeapons,...allPassives])
-    .filter(item=>!guaranteed.some(selected=>selected.key===item.key))].slice(0,3);
+  const weaponUpgrades=weaponCards.filter(item=>owned.includes(item.key));
+  const first=weaponUpgrades.find(item=>item.key==="leaf")||shuffled(weaponUpgrades)[0];
+  const water=!game.weaponSlots.leaf.evolved&&!passiveLevel("water")&&passiveCards.find(item=>item.key==="water");
+  const second=water||shuffled(passiveCards.filter(item=>passiveLevel(item.key)))[0];
+  const preferred=[first,second].filter(Boolean);
+  const other=shuffled([...weaponCards,...passiveCards]).filter(item=>!preferred.some(p=>p.key===item.key));
+  const cards=[...preferred,...other].slice(0,3);
+  if(cards.length<3) cards.push({kind:"training"});
+  if(cards.length<3&&game.player.hp<TREE.maxHp) cards.push({kind:"heal"});
+  return cards;
 }
 
 function upgrade() {
   game.xp-=nextXp();
   game.level++;
-  chooseCard(chooseUpgrades());
-}
-
-function chooseCard(cards) {
   show("레벨 "+game.level+" · 장비 선택","upgrade");
-  cards.forEach(({key,kind},i)=>{
-    const item=kind==="weapon"?weapons[key]:passives[key];
-    const level=kind==="weapon"?(game.weaponSlots[key]?.level||0):passiveLevel(key);
-    const needsReplace=kind==="passive" && !level && Object.keys(game.passiveSlots).length>=PASSIVE_SLOTS;
-    const suffix=kind==="weapon"?" · 진화 짝 "+passives[weapons[key].passive].name:"";
-    const title=item.name+" · Lv. "+(level+1)+(needsReplace?" · 교체":"");
-    const detail=(kind==="weapon"?item.detail:item.detail[level])+suffix;
+  chooseUpgrades().forEach(({key,kind},i)=>{
+    let title,detail;
+    if(kind==="training"){
+      title="공격력 강화";
+      detail="모든 무기의 피해가 기본값의 5%만큼 늘어납니다.";
+    } else if(kind==="heal"){
+      title="정비 키트";
+      detail="체력을 최대 28 회복합니다.";
+    } else {
+      const isWeapon=kind==="weapon";
+      const item=isWeapon?weapons[key]:passives[key];
+      const level=isWeapon?(game.weaponSlots[key]?.level||0):passiveLevel(key);
+      title=item.name+" · Lv. "+(level+1);
+      if(isWeapon){
+        const effect=level===0?item.detail:key==="leaf"?"잎 피해와 회전 반경 증가":"공격 피해 증가 · 공격 간격 단축";
+        detail=effect+" · 진화 짝 "+passives[item.passive].name;
+      } else {
+        detail=item.detail[level]+(key==="water"?" · 태양 수관 진화":"");
+      }
+    }
     const choice=button(title,()=>{
       if(state!=="upgrade") return;
-      if(needsReplace){replacePassive(key,cards);return;}
+      if(kind==="training"){game.training++;resume();return;}
+      if(kind==="heal"){game.player.hp=Math.min(TREE.maxHp,game.player.hp+28);resume();return;}
       equip(kind,key);
     },{style:"choose",detail});
     if(i===0) choice.focus();
   });
-  if(cards.length<3) button("정비 키트",()=>{
-    game.player.hp=Math.min(TREE.maxHp,game.player.hp+28);
-    resume();
-  },{style:"choose",detail:"체력을 28 회복합니다."});
 }
 
-function replacePassive(next,cards) {
-  show("패시브 교체","replace");
-  for(const key of Object.keys(game.passiveSlots)){
-    button(passives[key].name+" 교체",()=>{
-      if(state!=="replace") return;
-      delete game.passiveSlots[key];
-      equip("passive",next);
-    },{style:"choose",detail:passives[next].name+" Lv. 1 장착"});
-  }
-  button("장비 선택으로 돌아가기",()=>chooseCard(cards)).focus();
-}
 
 function equip(kind,key) {
   if(kind==="weapon"){
@@ -432,7 +436,7 @@ function evolve(keys) {
 }
 
 function quiz(q) {
-  show(q.title,"quiz");
+  show("라운드 "+game.round+" · "+q.title,"quiz");
   add("p",q.text);
   const cards=shuffled(q.options.map((text,index)=>({text,index}))).map(({text,index})=>({
     index,node:button(text,()=>answer(index),{style:"choose"})
@@ -447,43 +451,46 @@ function quiz(q) {
       node.disabled=true;
       if(i===q.right || i===index) node.dataset.answer=String(i===q.right);
     });
+    if(!correct){
+      const loss=Math.min(game.player.hp,QUIZ_DAMAGE);
+      game.player.hp-=loss;
+      const penalty=add("p","오답 · 체력 −"+loss);
+      penalty.id="penalty";
+    }
     const feedback=add("p","");
-    feedback.style.marginTop="14px";
     add("strong",correct?"정답. ":"정답은 "+q.options[q.right]+"입니다. ",feedback);
     feedback.append(document.createTextNode(q.explain));
-    button("이어하기",resume,{style:"primary"}).focus();
+    paintHud(true);
+    const done=game.round===ROUND_COUNT||game.player.hp<=0;
+    button(done?"결과 보기":"다음 라운드",advanceRound,{style:"primary"}).focus();
   }
 }
 
-function extendGame() {
-  game.stage="extended";
-  game.extensionEntered=true;
-  game.spawnAt=game.time+.6;
+function advanceRound() {
+  if(state!=="reviewing") return;
+  if(game.player.hp<=0){finish(false);return;}
+  if(game.round===ROUND_COUNT){
+    if(game.finalBossDown) game.roundsCleared=ROUND_COUNT;
+    finish(game.finalBossDown);
+    return;
+  }
+  game.roundsCleared=game.round;
+  game.round++;
   resume();
 }
 
-function basicComplete() {
-  game.basicCleared=true;
-  show("기본 5분 클리어","choice");
-  add("p","지금 장비와 양분으로 5분 더 도전할 수 있습니다.");
-  const actions=add("div","",content,"actions");
-  button("5분 더 도전",extendGame,{parent:actions,style:"primary"}).focus();
-  button("결과 보기",()=>finish("basic"),{parent:actions});
-}
-
-function finish(outcome) {
-  show(outcome==="all"?"10분 생존 성공":game.basicCleared?"기본 구간 클리어":"온실 방어 종료","result");
-  const reason=outcome==="all"?"차광 통제기를 멈추고 연장 구간을 클리어했습니다."
-    : outcome==="basic"?"기본 5분을 클리어했습니다."
-    : game.player.hp<=0?"체력을 모두 소진했습니다."
-    : "제한 시간 안에 보스를 멈추지 못했습니다.";
-  add("p",reason);
-  if(game.extensionEntered && outcome!=="all") add("p","기본 클리어 기록은 유지됩니다.");
-  add("p","생존 "+format(Math.floor(game.time))+" · 드론 "+game.kills+"대 · 데이터 칩 "+game.chips);
+function finish(clear) {
+  show(clear?"3라운드 클리어":"온실 방어 종료","result");
+  add("p",clear?"차광 통제기를 멈추고 세 라운드를 마쳤습니다."
+    :game.player.hp<=0?"체력을 모두 소진했습니다."
+    :"제한 시간 안에 차광 통제기를 멈추지 못했습니다.");
+  add("p","생존 "+format(Math.floor(game.time))+" · 라운드 "+game.roundsCleared+" / "+ROUND_COUNT);
+  add("p","드론 "+game.kills+"대 · 데이터 칩 "+game.chips);
   if(game.results.length) add("p","과학 문제 "+game.results.filter(Boolean).length+" / "+game.results.length);
   if(game.blocks) add("p","잎으로 막은 투사체 "+game.blocks+"발");
   button("다시 도전",start,{style:"primary"}).focus();
 }
+
 
 const format = seconds => Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0");
 function setBar(id,value,maximum) {
@@ -506,21 +513,23 @@ function slots(id,items,length){
 function paintHud(force=false) {
   if(!game) return;
   const p=game.player;
-  const clock=Math.ceil(Math.max(0,(game.stage==="basic"?BASIC_END:EXTENDED_END)-game.time));
+  const clock=Math.ceil(Math.max(0,game.round*ROUND_SECONDS-game.time));
   const boss=game.boss?.hp>0?game.boss:null;
   const cs=Object.entries(game.weaponSlots);
   const ps=Object.entries(game.passiveSlots);
   const loadout=JSON.stringify([cs.map(([key,w])=>[key,w.level,w.evolved]),ps]);
-  const key=[state,p.hp,Math.floor(p.fuel),capacity(),game.stage,clock,game.level,game.xp,game.chips,game.chests,boss?.hp,loadout].join("|");
+  const key=[state,p.hp,Math.floor(p.fuel),capacity(),game.round,clock,game.level,game.xp,game.chips,game.chests,game.training,boss?.hp,loadout].join("|");
   if(key===hudMemo && !force) return;
   hudMemo=key;
   $("clock").textContent=format(clock);
-  $("phase").textContent=game.stage==="basic"?"기본 5분":"연장 5분";
+  $("phase").textContent="라운드 "+game.round+" / "+ROUND_COUNT;
   $("healthText").textContent=Math.ceil(p.hp)+" / "+TREE.maxHp;
   $("fuelText").textContent=Math.floor(p.fuel)+" / "+capacity();
   $("level").textContent="Lv. "+game.level;
   $("chipText").textContent="칩 "+game.chips;
   $("loot").textContent="연구 상자 "+game.chests+"개";
+  $("training").hidden=!game.training;
+  $("training").textContent=game.training?"공격력 +"+game.training*5+"%":"";
   setBar("healthBar",Math.ceil(p.hp),TREE.maxHp);
   setBar("fuelBar",Math.floor(p.fuel),capacity());
   setBar("xpBar",Math.min(game.xp,nextXp()),nextXp());
@@ -587,17 +596,14 @@ function hurtPlayer(damage) {
 
 function hurtEnemy(enemy,damage) {
   if(enemy.hp<=0) return;
-  enemy.hp=Math.max(0,enemy.hp-damage);
+  enemy.hp=Math.max(0,enemy.hp-damage*(1+game.training*.05));
   enemy.flash=.10;
   if(enemy.hp) return;
   game.kills++;
   battleRing(enemy.x,enemy.y,enemy.r*2.1,enemy.color,.33);
-  const boss=enemy.type==="boss" || enemy.type==="final";
-  if(enemy.type==="boss") game.basicBossDown=true;
   if(enemy.type==="final") game.finalBossDown=true;
-  const value=boss?(enemy.type==="final"?30:20):enemy.xp;
-  game.drops.push({kind:"chip",x:enemy.x,y:enemy.y,value});
-  if(enemy.type==="shade" || boss) game.drops.push({kind:"chest",x:enemy.x+16,y:enemy.y+9});
+  game.drops.push({kind:"chip",x:enemy.x,y:enemy.y,value:enemy.xp});
+  if(enemy.type==="shade"||enemy.type==="final") game.drops.push({kind:"chest",x:enemy.x+16,y:enemy.y+9});
 }
 
 function collect(dt) {
@@ -634,48 +640,42 @@ function spawn(type,close=false) {
   const dist=close?rand(188,240):clamp(Math.min(c.w,c.h)/2+60,235,385);
   const start=movePoint(p,angle,dist);
   inBounds(start,24);
-  let scale=1;
-  if(game.stage==="extended") scale=type==="final"?1:1.22;
+  const scale=type==="final"?1:1+.105*(game.round-1);
   const hp=Math.round(base.hp*scale);
   const item={
     ...base,type,x:start.x,y:start.y,id:++game.spawnId,hp,max:hp,face:angle+Math.PI,
     flash:0,slowed:0,held:0,leafAt:0,outerAt:0,fireAt:game.time+rand(2,4),
     windup:null,dashLeft:0
   };
-  if(type==="boss" || type==="final") game.boss=item;
+  if(type==="final") game.boss=item;
   game.enemies.push(item);
-  if(type==="shade" || type==="boss" || type==="final") battleRing(item.x,item.y,item.r*2.4,item.color,.65);
+  if(type==="shade" || type==="final") battleRing(item.x,item.y,item.r*2.4,item.color,.65);
 }
 
 function spawnWave() {
-  const t=game.time;
-  if(t<42){spawn("scout");return;}
   const roll=Math.random();
-  if(t<86){
+  if(game.round===1){
     const shooters=game.enemies.filter(e=>e.type==="shot"&&e.hp>0).length;
-    spawn(t>=63&&shooters<2&&roll<.22?"shot":"scout");
+    spawn(game.time>=48&&shooters<2&&roll<.19?"shot":game.time>=57&&roll<.27?"dash":"scout");
     return;
   }
-  if(t<135){spawn(roll<.15?"shot":roll<.32?"dash":roll<.43?"armor":"scout");return;}
-  if(t<BASIC_END){spawn(roll<.19?"shot":roll<.39?"dash":roll<.57?"armor":"scout");return;}
-  spawn(roll<.25?"shot":roll<.44?"dash":roll<.72?"armor":"scout");
+  const heavy=game.round===3?.68:.49;
+  spawn(roll<.17?"shot":roll<.33?"dash":roll<heavy?"armor":"scout");
 }
 
 function timeline() {
-  const t=game.time;
   const events=[
-    [42,"first-shot",()=>spawn("shot",true)],
-    [112,"first-elite",()=>spawn("shade",true)],
-    [204,"second-elite",()=>spawn("shade",true)],
-    [254,"basic-boss",()=>spawn("boss",true)],
-    [372,"extra-elite",()=>spawn("shade",true)],
-    [455,"second-extra-elite",()=>spawn("shade",true)],
-    [544,"final-boss",()=>spawn("final",true)]
+    [39,"first-shot",()=>spawn("shot",true)],
+    [61,"first-elite",()=>spawn("shade",true)],
+    [134,"second-elite",()=>spawn("shade",true)],
+    [201,"third-elite",()=>spawn("shade",true)],
+    [220,"final-boss",()=>spawn("final",true)]
   ];
   for(const [at,id,action] of events){
-    if(t>=at&&!game.events.has(id)){game.events.add(id);action();}
+    if(game.time>=at&&!game.events.has(id)){game.events.add(id);action();}
   }
 }
+
 
 function beginEnemyTell(enemy,d) {
   const t=game.time;
@@ -684,8 +684,8 @@ function beginEnemyTell(enemy,d) {
   if(enemy.type==="shot" && d<=248) enemy.windup={kind:"shot",ends:t+1.65,angle};
   else if(enemy.type==="dash" && d<=124) enemy.windup={kind:"dash",ends:t+1.05,angle};
   else if(enemy.type==="shade" && d<=184) enemy.windup={kind:"shade",ends:t+2.1,x:game.player.x,y:game.player.y,r:36};
-  else if((enemy.type==="boss" || enemy.type==="final") && d<=264) {
-    enemy.windup={kind:"boss",ends:t+1.95,angle,r:75};
+  else if(enemy.type==="final" && d<=264) {
+    enemy.windup={kind:"boss",ends:t+2.1,angle,r:75};
   }
 }
 
@@ -694,7 +694,7 @@ function fireEnemy(enemy,tell) {
   enemy.windup=null;
   if(tell.kind==="shot"){
     const point=movePoint(enemy,tell.angle,enemy.r+6);
-    game.shots.push({...point,angle:tell.angle,speed:93,life:4.5,damage:t<BASIC_END?7:11});
+    game.shots.push({...point,angle:tell.angle,speed:93,life:4.5,damage:game.round===3?8:6});
     enemy.fireAt=t+rand(5.6,7.3);
   } else if(tell.kind==="dash"){
     enemy.dashLeft=.67;
@@ -704,11 +704,11 @@ function fireEnemy(enemy,tell) {
     game.hazards.push({kind:"shade",x:tell.x,y:tell.y,r:tell.r,life:9,max:9});
     enemy.fireAt=t+14;
   } else {
-    const angles=enemy.type==="final"?[-.52,-.26,0,.26,.52]:[-.34,0,.34];
+    const angles=[-.48,-.24,0,.24,.48];
     for(const offset of angles){
       const angle=tell.angle+offset;
       const point=movePoint(enemy,angle,enemy.r+7);
-      game.shots.push({...point,angle,speed:100,life:4.6,damage:16});
+      game.shots.push({...point,angle,speed:100,life:4.6,damage:11});
     }
     battleRing(enemy.x,enemy.y,tell.r,PALETTE.red,.45);
     if(distance(enemy,game.player)<tell.r) hurtPlayer(enemy.damage);
@@ -853,7 +853,7 @@ function useWeapon(key,w) {
     if(!targets.length) return false;
     battleRing(p.x,p.y,radius,"#f9bd82");
     for(const e of targets){
-      const factor=e.type==="boss"||e.type==="final"?.30:1;
+      const factor=e.type==="final"?.30:1;
       push(e,heading(e,p),Math.max(0,Math.min(distance(p,e)-31,w.evolved?58:28))*factor);
       if(w.evolved) e.held=.65;
       hurtEnemy(e,damage*(w.evolved?1.38:.80));
@@ -976,20 +976,14 @@ function circlesAndWaves(dt) {
 }
 
 function tick(dt) {
-  const end=game.stage==="basic"?BASIC_END:EXTENDED_END;
+  const end=game.round*ROUND_SECONDS;
   game.time=Math.min(end,game.time+dt);
-  if(game.time>=end){
-    if(game.stage==="basic" && game.basicBossDown) basicComplete();
-    else finish(game.stage==="extended"&&game.finalBossDown?"all":"lost");
-    return;
-  }
+  if(game.time>=end){quiz(questions[game.round-1]);return;}
 
-  const q=questions[game.results.length];
-  if(q && game.time>=q.at){quiz(q);return;}
   timeline();
   if(game.time>=game.spawnAt){
     if(game.enemies.length<105) spawnWave();
-    const base=game.time<26?1.17:game.time<88?.88:game.stage==="basic"?.67:.50;
+    const base=game.time<22?1.08:[.86,.71,.62][game.round-1];
     game.spawnAt=game.time+base*rand(.84,1.16);
   }
   movePlayer(dt);
@@ -1002,7 +996,7 @@ function tick(dt) {
   circlesAndWaves(dt);
   game.enemies=game.enemies.filter(e=>e.hp>0);
   collect(dt);
-  if(game.player.hp<=0){finish("lost");return;}
+  if(game.player.hp<=0){finish(false);return;}
   if(game.xp>=nextXp()){upgrade();return;}
   const ready=game.chests>0?readyToEvolve():[];
   if(ready.length){evolve(ready);return;}
@@ -1065,6 +1059,7 @@ function scene(c,time) {
     }
   }
 
+  drawLandmarks(c);
   const light=sunAt(time), left=light-LIGHT_WIDTH/2, next=sunAt(time+4);
   const warm=paint.createLinearGradient(left,0,left+LIGHT_WIDTH,0);
   warm.addColorStop(0,"#fde47d12"); warm.addColorStop(.13,"#fde47d29");
@@ -1095,6 +1090,57 @@ function scene(c,time) {
   paint.fillRect(c.x,c.y,c.w,c.h);
 }
 
+
+function drawLandmarks(c) {
+  for(const [x,y,kind] of LANDMARKS){
+    if(x<c.x-60||x>c.x+c.w+60||y<c.y-55||y>c.y+c.h+55) continue;
+    paint.fillStyle="#10251c";
+    paint.fillRect(x-35,y+8,70,27);
+    if(kind==="planter"){
+      paint.fillStyle="#754a34";
+      paint.fillRect(x-33,y-12,66,36);
+      paint.fillStyle="#ca9666";
+      paint.fillRect(x-33,y-16,66,8);
+      paint.fillStyle="#4c352b";
+      paint.fillRect(x-28,y-8,56,20);
+      for(const dx of [-19,0,19]){
+        paint.fillStyle="#7f9f59";
+        paint.fillRect(x+dx-7,y-19,14,23);
+        paint.fillStyle="#a5c66f";
+        paint.fillRect(x+dx-4,y-23,9,11);
+        paint.fillStyle="#66854b";
+        paint.fillRect(x+dx-10,y-12,7,8);
+      }
+    } else if(kind==="tank"){
+      paint.fillStyle="#273e46";
+      paint.fillRect(x-24,y-27,48,51);
+      paint.fillStyle="#6caaad";
+      paint.fillRect(x-25,y-27,50,11);
+      paint.fillStyle="#4e7d91";
+      paint.fillRect(x-20,y-15,40,37);
+      paint.fillStyle="#84c3d0";
+      paint.fillRect(x-20,y-11,8,25);
+      paint.fillStyle="#add7cd";
+      paint.fillRect(x-3,y-9,7,15);
+      paint.fillRect(x-7,y-2,15,7);
+    } else {
+      paint.fillStyle="#8b7255";
+      paint.fillRect(x-28,y+6,8,18);
+      paint.fillRect(x+20,y+6,8,18);
+      paint.fillStyle="#c6ab7a";
+      paint.fillRect(x-36,y-13,72,25);
+      paint.fillStyle="#9e8158";
+      paint.fillRect(x-36,y+6,72,7);
+      paint.fillStyle="#4e7b62";
+      paint.fillRect(x-24,y-20,23,17);
+      paint.fillStyle="#8dbf91";
+      paint.fillRect(x-24,y-20,23,4);
+      paint.fillStyle="#d1a164";
+      paint.fillRect(x+9,y-19,16,15);
+    }
+  }
+}
+
 function treeAt(x,y,frame,scale,lit=true) {
   circle(x,y+scale*.27,scale*.33);
   paint.fillStyle="#10201abb";
@@ -1121,7 +1167,7 @@ function drawDrone(e) {
   paint.fill();
   paint.rotate(e.face||0);
   const r=e.r;
-  const crown=e.type==="boss"||e.type==="final";
+  const crown=e.type==="final";
   paint.strokeStyle=e.color;
   paint.lineWidth=crown?3:1.7;
   paint.fillStyle=e.flash?"#f8f4dd":crown?"#694843":"#434b47";
@@ -1158,7 +1204,7 @@ function drawTell(e) {
     outlinedCircle(t,t.r,"#ceadf5",2);
   } else if(t.kind==="boss"){
     outlinedCircle(e,t.r,PALETTE.red,2);
-    for(const a of e.type==="final"?[-.52,-.26,0,.26,.52]:[-.34,0,.34]){
+    for(const a of [-.48,-.24,0,.24,.48]){
       line([e,movePoint(e,t.angle+a,282)],"#ffaf8b75",2);
     }
   } else {
