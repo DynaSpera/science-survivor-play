@@ -103,6 +103,12 @@ dialog p{margin:0 0 12px}
   .inventory .minimap:not([data-expanded="true"]){display:none}
   .equipment-dialog{position:fixed;inset:auto 0 0;width:100%;max-width:none;max-height:76svh;margin:0;border-radius:14px 14px 0 0;padding-bottom:max(18px,env(safe-area-inset-bottom))}
 }
+@media(max-width:850px) and (orientation:portrait){
+  #minimapToggle{display:none}
+  .arena .minimap{position:absolute;top:8px;right:8px;z-index:1;width:clamp(96px,28vw,124px);margin:0;pointer-events:none}
+  .arena .minimap figcaption{display:none}
+  .arena .minimap canvas{border-color:#8da78f99}
+}
 @media(max-width:560px){
   header{margin-bottom:7px}.brand strong{font-size:16px}
   .header-controls .button{padding-inline:9px}
@@ -130,7 +136,7 @@ dialog p{margin:0 0 12px}
         <div class="phase"><div id="clock" class="clock">1:30</div><strong id="phase">라운드 1 / 3</strong><span id="quizStatus" hidden></span></div>
         <div><div class="bar-label"><span>저장 양분</span><span id="fuelText">0 / 100</span></div><div id="fuelBar" class="progress" role="progressbar" aria-label="저장 양분" aria-valuemax="100" aria-valuenow="0"><span></span></div></div>
       </div>
-      <div class="arena">
+      <div id="arena" class="arena">
         <canvas id="field" aria-label="온실 전투 지도"></canvas>
         <div id="bossBar" class="boss" hidden><div id="bossName"></div><div id="bossHealth" class="progress" role="progressbar" aria-label="보스 체력"><span></span></div></div>
         <section class="cover" id="cover">
@@ -143,7 +149,7 @@ dialog p{margin:0 0 12px}
       </div>
       <div class="stats"><span id="level">Lv. 1</span><div class="progress" id="xpBar" role="progressbar" aria-label="다음 레벨까지 경험치" aria-valuemax="5" aria-valuenow="0"><span></span></div><span id="chipText">칩 0</span></div>
     </section>
-    <aside class="inventory" aria-label="미니맵과 장비">
+    <aside id="inventoryPanel" class="inventory" aria-label="미니맵과 장비">
       <div id="mobileTools" class="mobile-tools" hidden>
         <button id="minimapToggle" class="button" type="button" aria-controls="minimapPanel" aria-expanded="false">미니맵</button>
         <button id="gearButton" class="button" type="button" aria-haspopup="dialog">장비</button>
@@ -175,7 +181,7 @@ const $ = id => document.getElementById(id);
 const canvas = $("field");
 const paint = canvas.getContext("2d", {alpha:false});
 const map = $("minimap");
-const mapPaint = map.getContext("2d", {alpha:false});
+const mapPaint = map.getContext("2d");
 const modal = $("modal");
 const content = $("modalContent");
 const TAU = 2 * Math.PI;
@@ -218,6 +224,7 @@ const LANDMARKS = [
 ];
 const motion = matchMedia("(prefers-reduced-motion: reduce)");
 const compactLayout = matchMedia("(max-width: 850px)");
+const portraitLayout = matchMedia("(max-width: 850px) and (orientation: portrait)");
 
 const weapons = {
   leaf: {name:"잎사귀 나선", icon:"❧", evolved:"태양 수관", passive:"water", detail:"회전하는 잎으로 가까운 적과 탄을 막습니다.", evolution:"양분을 써 더 넓은 바깥쪽 잎을 돌립니다."},
@@ -438,7 +445,7 @@ function help(from) {
   for(const [title,detail] of [
     ["이동","방향키·WASD 또는 전투 화면을 눌러 드래그하세요. 햇살나무는 아주 조금씩 움직이고, 멈춰 있으면 뿌리를 내립니다."],
     ["빛과 양분","빛이 가까이 지나갈 때 양분을 모읍니다. 뿌리 상태에서 더 빠르게 채워집니다."],
-    ["지도","미니맵의 초록 점은 햇살나무, 빨간 점은 드론입니다. 차광 드론과 보스는 마름모, 오브젝트는 작은 사각형으로 보입니다. 작은 화면에서는 전투 아래 미니맵 버튼으로 펼칩니다. M 키나 지도 버튼으로 전체 지도를 엽니다."],
+    ["지도","미니맵의 초록 점은 햇살나무, 빨간 점은 드론입니다. 차광 드론과 보스는 마름모, 오브젝트는 작은 사각형으로 보입니다. 휴대폰 세로 화면에서는 전투 오른쪽 위에 보입니다. 좁은 가로 화면에서는 전투 아래 미니맵 버튼으로 펼칩니다. M 키나 지도 버튼으로 전체 지도를 엽니다."],
     ["칩과 레벨업","적이 떨어뜨린 칩과 연구 상자는 넓은 범위에서 뿌리 쪽으로 끌려옵니다."],
     ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선을 강화하면 잎이 늘고 더 넓고 빠르게 돕니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
     ["장비",`스킬 ${WEAPON_SLOTS}칸, 패시브 ${PASSIVE_SLOTS}칸입니다. 아이콘 아래 점은 최대 레벨, 채운 점은 현재 레벨입니다. 아이콘을 선택하면 효과나 진화 짝을 확인할 수 있습니다.`],
@@ -490,6 +497,17 @@ function openMap() {
 function closeMap() {
   resume();
   $("mapButton").focus({preventScroll:true});
+}
+
+function placeMinimap() {
+  const panel=$("minimapPanel");
+  if(portraitLayout.matches){
+    $("arena").append(panel);
+    map.width=map.height;
+  } else {
+    $("inventoryPanel").insertBefore(panel,$("desktopGear"));
+    map.width=416;
+  }
 }
 
 function toggleMinimap() {
@@ -1740,13 +1758,15 @@ function drawMinimap(c) {
   const xOnMap=x=>left+(x-c.x)*scale;
   const yOnMap=y=>top+(y-c.y)*scale;
 
-  mapPaint.fillStyle="#14231d";
+  const overlay=portraitLayout.matches;
+  mapPaint.clearRect(0,0,map.width,map.height);
+  mapPaint.fillStyle=overlay?"#14231d88":"#14231d";
   mapPaint.fillRect(0,0,map.width,map.height);
   mapPaint.save();
   mapPaint.beginPath();
   mapPaint.rect(left,top,width*scale,height*scale);
   mapPaint.clip();
-  mapPaint.fillStyle="#1a2b23";
+  mapPaint.fillStyle=overlay?"#1a2b2378":"#1a2b23";
   mapPaint.fillRect(left,top,width*scale,height*scale);
   mapPaint.fillStyle="#bda34465";
   mapPaint.fillRect(xOnMap(sunAt(game.time)-LIGHT_WIDTH/2),top,LIGHT_WIDTH*scale,height*scale);
@@ -1799,7 +1819,7 @@ function drawFrame(now) {
     scene(c,game?.time??Math.min(20,coverTime/3));
     if(game){
       drawBattle();
-      if(!compactLayout.matches||$("minimapPanel").dataset.expanded==="true") drawMinimap(c);
+      if(!compactLayout.matches||portraitLayout.matches||$("minimapPanel").dataset.expanded==="true") drawMinimap(c);
     } else {
       const foreground={x:c.x+c.w*(view.w<=560?.54:.71),y:c.y+c.h*(view.w<=560?.30:.50)};
       outlinedCircle(foreground,116,"#e8d99562",2);
@@ -1886,6 +1906,8 @@ $("mapButton").addEventListener("click",openMap);
 $("pause").addEventListener("click",pauseMenu);
 $("minimapToggle").addEventListener("click",toggleMinimap);
 $("gearButton").addEventListener("click",openGear);
+portraitLayout.addEventListener("change",placeMinimap);
+placeMinimap();
 renderEquipment($("weapons"),$("passives"),$("gearDetail"),{leaf:{level:1,evolved:false}},{});
 new ResizeObserver(fit).observe(canvas);
 fit();
