@@ -39,7 +39,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 .minimap{margin:0 0 14px}
 .minimap figcaption{margin-bottom:6px;color:#e2eade;font-size:13px;font-weight:750}
 .minimap canvas{height:auto;border:1px solid #687e70;border-radius:6px}
-.mobile-tools{display:none}
+.gear-overlay{display:none}
 .cover{position:absolute;inset:0;display:flex;align-items:center;padding:clamp(22px,5vw,70px);background:linear-gradient(90deg,#101c17f2 8%,#111e18cf 41%,#15231b08 78%)}
 .cover-inner{max-width:440px}
 .cover h1{margin:0;font-size:clamp(50px,9vw,124px);font-weight:950;letter-spacing:-.105em;line-height:1.04;color:#f8f2d3}
@@ -94,20 +94,22 @@ dialog p{margin:0 0 12px}
 .help strong{color:var(--sun);margin-right:7px}
 @media(max-width:850px){
   .layout{grid-template-columns:minmax(0,1fr)}
-  .inventory{padding:8px 10px}
-  .inventory:has(.mobile-tools[hidden]){display:none}
-  .inventory .gear{display:none}
-  .mobile-tools{display:flex;gap:6px}
-  .mobile-tools .button{flex:1;min-height:42px;padding-inline:5px}
-  .minimap{width:min(196px,100%);margin:9px auto 0}
-  .inventory .minimap:not([data-expanded="true"]){display:none}
-  .equipment-dialog{position:fixed;inset:auto 0 0;width:100%;max-width:none;max-height:76svh;margin:0;border-radius:14px 14px 0 0;padding-bottom:max(18px,env(safe-area-inset-bottom))}
-}
-@media(max-width:850px) and (orientation:portrait){
-  #minimapToggle{display:none}
+  .inventory{display:none}
   .arena .minimap{position:absolute;top:8px;right:8px;z-index:1;width:clamp(96px,28vw,124px);margin:0;pointer-events:none}
   .arena .minimap figcaption{display:none}
   .arena .minimap canvas{border-color:#8da78f99}
+  .gear-overlay{position:absolute;top:8px;left:8px;z-index:1;display:grid;gap:3px;place-content:center;min-width:44px;min-height:44px;padding:4px;border:1px solid #8da78f99;border-radius:6px;background:#14231dbf;color:var(--leaf);touch-action:manipulation}
+  .gear-preview{display:grid;grid-template-columns:repeat(4,min-content);gap:2px;text-align:center}
+  .gear-preview:empty{display:none}
+  .gear-preview + .gear-preview:not(:empty){border-top:1px solid #8da78f66;padding-top:3px}
+  .gear-preview-item{display:grid;justify-items:center;gap:2px;padding:2px;border:1px solid #799563;border-radius:4px;background:#273d30}
+  .gear-preview .item-icon{width:20px}
+  .gear-preview .slot-dots{gap:2px}
+  .gear-preview .slot-dots i{width:3px;height:3px}
+  .gear-preview.passive-slots{color:#b8e7ed}
+  .passive-slots .gear-preview-item{border-color:#607f84;background:#20373b}
+  .gear-preview-item.evolved{color:var(--sun);border-color:var(--sun)}
+  .equipment-dialog{position:fixed;inset:auto 0 0;width:100%;max-width:none;max-height:76svh;margin:0;border-radius:14px 14px 0 0;padding-bottom:max(18px,env(safe-area-inset-bottom))}
 }
 @media(max-width:560px){
   header{margin-bottom:7px}.brand strong{font-size:16px}
@@ -138,6 +140,10 @@ dialog p{margin:0 0 12px}
       </div>
       <div id="arena" class="arena">
         <canvas id="field" aria-label="온실 전투 지도"></canvas>
+        <button id="gearButton" class="gear-overlay" type="button" aria-label="장비 상세 보기" aria-haspopup="dialog" hidden>
+          <span id="gearPreviewSkills" class="gear-preview" aria-hidden="true"></span>
+          <span id="gearPreviewPassives" class="gear-preview passive-slots" aria-hidden="true"></span>
+        </button>
         <div id="bossBar" class="boss" hidden><div id="bossName"></div><div id="bossHealth" class="progress" role="progressbar" aria-label="보스 체력"><span></span></div></div>
         <section class="cover" id="cover">
           <div class="cover-inner">
@@ -150,10 +156,6 @@ dialog p{margin:0 0 12px}
       <div class="stats"><span id="level">Lv. 1</span><div class="progress" id="xpBar" role="progressbar" aria-label="다음 레벨까지 경험치" aria-valuemax="5" aria-valuenow="0"><span></span></div><span id="chipText">칩 0</span></div>
     </section>
     <aside id="inventoryPanel" class="inventory" aria-label="미니맵과 장비">
-      <div id="mobileTools" class="mobile-tools" hidden>
-        <button id="minimapToggle" class="button" type="button" aria-controls="minimapPanel" aria-expanded="false">미니맵</button>
-        <button id="gearButton" class="button" type="button" aria-haspopup="dialog">장비</button>
-      </div>
       <figure id="minimapPanel" class="minimap" hidden>
         <figcaption>미니맵</figcaption>
         <canvas id="minimap" width="416" height="288" role="img" aria-label="현재 전투 화면에 있는 햇살나무, 드론, 오브젝트와 빛 구역"></canvas>
@@ -222,9 +224,14 @@ const LANDMARKS = [
   [492,812,"planter"],[1240,803,"bench"],[315,576,"bench"],[1376,565,"tank"],
   [618,216,"planter"],[1040,221,"bench"],[658,966,"tank"],[1035,963,"planter"]
 ];
+const FOOTPRINTS = {planter:[33,-12,24],tank:[24,-15,24],bench:[34,-8,24]};
+const OBSTACLES = LANDMARKS.map(([x,y,kind])=>{
+  const [halfWidth,back,front]=FOOTPRINTS[kind];
+  return {x:[x-halfWidth,x+halfWidth],y:[y+back,y+front]};
+});
+const DRONE_NAVIGATION = new Map();
 const motion = matchMedia("(prefers-reduced-motion: reduce)");
 const compactLayout = matchMedia("(max-width: 850px)");
-const portraitLayout = matchMedia("(max-width: 850px) and (orientation: portrait)");
 
 const weapons = {
   leaf: {name:"잎사귀 나선", icon:"❧", evolved:"태양 수관", passive:"water", detail:"회전하는 잎으로 가까운 적과 탄을 막습니다.", evolution:"양분을 써 더 넓은 바깥쪽 잎을 돌립니다."},
@@ -343,6 +350,117 @@ const inBounds = (point,margin=20) => {
   point.x=clamp(point.x,margin,WORLD.w-margin);
   point.y=clamp(point.y,margin,WORLD.h-margin);
 };
+
+function moveOnField(point,dx,dy,radius,margin=radius+1){
+  for(const [axis,cross,delta,limit] of [["x","y",dx,WORLD.w],["y","x",dy,WORLD.h]]){
+    const from=point[axis];
+    let to=clamp(from+delta,margin,limit-margin);
+    if(to===from) continue;
+    for(const obstacle of OBSTACLES){
+      if(point[cross]<=obstacle[cross][0]-radius || point[cross]>=obstacle[cross][1]+radius) continue;
+      const low=obstacle[axis][0]-radius, high=obstacle[axis][1]+radius;
+      if(from<=low && to>low) to=low;
+      if(from>=high && to<high) to=high;
+    }
+    point[axis]=to;
+  }
+}
+
+function openFieldPoint(point,radius){
+  let open=point;
+  for(const {x:[left,right],y:[top,bottom]} of OBSTACLES){
+    const x0=left-radius,x1=right+radius,y0=top-radius,y1=bottom+radius;
+    const {x,y}=open;
+    if(x<=x0 || x>=x1 || y<=y0 || y>=y1) continue;
+    // Find the closest edge of the footprint expanded by the actor's radius.
+    const sides=[{x:x0,y},{x:x1,y},{x,y:y0},{x,y:y1}];
+    open=sides.reduce((best,side)=>distance(point,side)<distance(point,best)?side:best);
+  }
+  return open;
+}
+
+function crossesObstacle(from,to,obstacle,radius){
+  let enter=0, exit=1;
+  for(const axis of ["x","y"]){
+    const low=obstacle[axis][0]-radius, high=obstacle[axis][1]+radius;
+    const origin=from[axis], delta=to[axis]-origin;
+    if(delta===0){
+      if(origin<=low || origin>=high) return false;
+      continue;
+    }
+    const a=(low-origin)/delta,b=(high-origin)/delta;
+    enter=Math.max(enter,Math.min(a,b));
+    exit=Math.min(exit,Math.max(a,b));
+    if(enter>=exit) return false;
+  }
+  return true;
+}
+
+function clearPath(from,to,radius){
+  return OBSTACLES.every(obstacle=>!crossesObstacle(from,to,obstacle,radius));
+}
+
+function droneNavigation(radius){
+  if(DRONE_NAVIGATION.has(radius)) return DRONE_NAVIGATION.get(radius);
+  const pad=radius+1;
+  const corners=OBSTACLES.flatMap(({x:[left,right],y:[top,bottom]})=>[
+    {x:left-pad,y:top-pad},{x:right+pad,y:top-pad},
+    {x:left-pad,y:bottom+pad},{x:right+pad,y:bottom+pad}
+  ]).filter(corner=>openFieldPoint(corner,radius)===corner);
+  const links=corners.map(()=>[]);
+  for(let i=0;i<corners.length;i++){
+    for(let j=0;j<i;j++){
+      if(!clearPath(corners[i],corners[j],radius)) continue;
+      const length=distance(corners[i],corners[j]);
+      links[i].push([j,length]);
+      links[j].push([i,length]);
+    }
+  }
+  const mesh={corners,links,goal:null,costs:null};
+  DRONE_NAVIGATION.set(radius,mesh);
+  return mesh;
+}
+
+function routeCosts(mesh,goal,radius){
+  if(mesh.goal?.x===goal.x && mesh.goal?.y===goal.y) return mesh.costs;
+  const {corners,links}=mesh;
+  const costs=corners.map(corner=>clearPath(corner,goal,radius)?distance(corner,goal):Infinity);
+  const settled=new Uint8Array(corners.length);
+  // Shortest distances from every usable corner to the shared target.
+  for(let step=0;step<corners.length;step++){
+    let next=-1,best=Infinity;
+    for(let i=0;i<costs.length;i++){
+      if(settled[i] || costs[i]>=best) continue;
+      next=i;
+      best=costs[i];
+    }
+    if(next<0) break;
+    settled[next]=1;
+    for(const [neighbor,length] of links[next]){
+      costs[neighbor]=Math.min(costs[neighbor],best+length);
+    }
+  }
+  mesh.goal={x:goal.x,y:goal.y};
+  mesh.costs=costs;
+  return costs;
+}
+
+function droneWaypoint(drone,goal){
+  const radius=drone.r;
+  if(clearPath(drone,goal,radius)) return goal;
+  const mesh=droneNavigation(radius);
+  const costs=routeCosts(mesh,goal,radius);
+  let waypoint=goal,best=Infinity;
+  for(const [i,corner] of mesh.corners.entries()){
+    const approach=distance(drone,corner);
+    const total=approach+costs[i];
+    if(approach<.001 || total>=best || !clearPath(drone,corner,radius)) continue;
+    best=total;
+    waypoint=corner;
+  }
+  return waypoint;
+}
+
 const mix = (a,b,n) => a+(b-a)*n;
 const shuffled = list => {
   const copy=[...list];
@@ -397,7 +515,7 @@ function start() {
   };
   $("cover").hidden=true;
   $("minimapPanel").hidden=false;
-  $("mobileTools").hidden=false;
+  $("gearButton").hidden=false;
   resume();
 }
 
@@ -443,12 +561,12 @@ function help(from) {
   show("도움말","help");
   const list=add("ul","",content,"help");
   for(const [title,detail] of [
-    ["이동","방향키·WASD 또는 전투 화면을 눌러 드래그하세요. 햇살나무는 아주 조금씩 움직이고, 멈춰 있으면 뿌리를 내립니다."],
+    ["이동","방향키·WASD 또는 전투 화면을 눌러 드래그하세요. 햇살나무는 아주 조금씩 움직이고, 멈춰 있으면 뿌리를 내립니다. 화분·물탱크·작업대는 돌아가야 합니다."],
     ["빛과 양분","빛이 가까이 지나갈 때 양분을 모읍니다. 뿌리 상태에서 더 빠르게 채워집니다."],
-    ["지도","미니맵의 초록 점은 햇살나무, 빨간 점은 드론입니다. 차광 드론과 보스는 마름모, 오브젝트는 작은 사각형으로 보입니다. 휴대폰 세로 화면에서는 전투 오른쪽 위에 보입니다. 좁은 가로 화면에서는 전투 아래 미니맵 버튼으로 펼칩니다. M 키나 지도 버튼으로 전체 지도를 엽니다."],
+    ["지도","미니맵의 초록 점은 햇살나무, 빨간 점은 드론입니다. 차광 드론과 보스는 마름모, 장애물은 작은 사각형으로 보입니다. 좁은 화면에서는 전투 오른쪽 위에 보입니다. M 키나 지도 버튼으로 전체 지도를 엽니다."],
     ["칩과 레벨업","적이 떨어뜨린 칩과 연구 상자는 넓은 범위에서 뿌리 쪽으로 끌려옵니다."],
     ["잎과 진화","잎에 닿은 적의 탄을 막습니다. 잎사귀 나선을 강화하면 잎이 늘고 더 넓고 빠르게 돕니다. 잎사귀 나선 Lv. 4, 급수 모듈, 연구 상자를 모으면 태양 수관으로 진화합니다."],
-    ["장비",`스킬 ${WEAPON_SLOTS}칸, 패시브 ${PASSIVE_SLOTS}칸입니다. 아이콘 아래 점은 최대 레벨, 채운 점은 현재 레벨입니다. 아이콘을 선택하면 효과나 진화 짝을 확인할 수 있습니다.`],
+    ["장비",`스킬 ${WEAPON_SLOTS}칸, 패시브 ${PASSIVE_SLOTS}칸입니다. 아이콘 아래 점은 최대 레벨, 채운 점은 현재 레벨입니다. 좁은 화면에서는 왼쪽 위의 보유 장비를 누르면 자세히 볼 수 있습니다.`],
     ["라운드와 문제","1분 30초씩 세 라운드입니다. Lv. 2부터 두 레벨마다 짧은 문제가 나오고, 라운드 끝에는 자료 해석 문제가 나옵니다. 숫자 키 1~3으로 보기를 고를 수 있습니다. 오답이면 이후 전투 15초 동안 무기 피해가 15% 줄어듭니다."]
   ]){
     const item=add("li","",list);
@@ -463,7 +581,7 @@ function backToCover() {
   state="cover";
   game=null;
   $("minimapPanel").hidden=true;
-  $("mobileTools").hidden=true;
+  $("gearButton").hidden=true;
   $("help").focus();
 }
 
@@ -501,20 +619,13 @@ function closeMap() {
 
 function placeMinimap() {
   const panel=$("minimapPanel");
-  if(portraitLayout.matches){
+  if(compactLayout.matches){
     $("arena").append(panel);
     map.width=map.height;
   } else {
     $("inventoryPanel").insertBefore(panel,$("desktopGear"));
     map.width=416;
   }
-}
-
-function toggleMinimap() {
-  const panel=$("minimapPanel");
-  const expanded=panel.dataset.expanded!=="true";
-  panel.dataset.expanded=String(expanded);
-  $("minimapToggle").setAttribute("aria-expanded",String(expanded));
 }
 
 function openGear() {
@@ -747,6 +858,31 @@ function renderEquipment(skills,modules,detail,ownedWeapons,ownedPassives){
   (firstSkill??firstPassive)?.();
 }
 
+function addItemIcon(tile,key,level,maxLevel){
+  const icon=add("span","",tile,"item-icon");
+  const [x,y]=ITEM_ICON_POSITIONS[key];
+  icon.style.backgroundImage=`url(${ITEM_ICON_IMAGE})`;
+  icon.style.backgroundPosition=`${x*25}% ${y*20}%`;
+  icon.setAttribute("aria-hidden","true");
+  const dots=add("span","",tile,"slot-dots");
+  dots.setAttribute("aria-hidden","true");
+  for(let n=0;n<maxLevel;n++) add("i","",dots,n<level?"filled":"");
+}
+
+function renderGearPreview(skills,passives){
+  const skillRack=$("gearPreviewSkills"), passiveRack=$("gearPreviewPassives");
+  skillRack.replaceChildren();
+  passiveRack.replaceChildren();
+  for(const [key,skill] of skills){
+    const tile=add("span","",skillRack,skill.evolved?"gear-preview-item evolved":"gear-preview-item");
+    addItemIcon(tile,key,skill.level,MAX_WEAPON_LEVEL);
+  }
+  for(const [key,level] of passives){
+    const tile=add("span","",passiveRack,"gear-preview-item");
+    addItemIcon(tile,key,level,MAX_PASSIVE_LEVEL);
+  }
+}
+
 function slots(list,items,isWeapon,detail){
   const length=isWeapon?WEAPON_SLOTS:PASSIVE_SLOTS;
   const maxLevel=isWeapon?MAX_WEAPON_LEVEL:MAX_PASSIVE_LEVEL;
@@ -770,14 +906,7 @@ function slots(list,items,isWeapon,detail){
     const slot=add("button","",tile,evolved?"slot-button evolved":"slot-button");
     slot.type="button";
     slot.setAttribute("aria-label",`${name}, 현재 레벨 ${level}, 최대 레벨 ${maxLevel}${evolved?", 진화":""}`);
-    const icon=add("span","",slot,"item-icon");
-    const [x,y]=ITEM_ICON_POSITIONS[key];
-    icon.style.backgroundImage=`url(${ITEM_ICON_IMAGE})`;
-    icon.style.backgroundPosition=`${x*25}% ${y*20}%`;
-    icon.setAttribute("aria-hidden","true");
-    const dots=add("span","",slot,"slot-dots");
-    dots.setAttribute("aria-hidden","true");
-    for(let n=0;n<maxLevel;n++) add("i","",dots,n<level?"filled":"");
+    addItemIcon(slot,key,level,maxLevel);
     slot.addEventListener("focus",describe);
     slot.addEventListener("pointerenter",describe);
     slot.addEventListener("click",describe);
@@ -820,6 +949,7 @@ function paintHud(force=false) {
   if(game.lastLoadout!==loadout){
     game.lastLoadout=loadout;
     renderEquipment($("weapons"),$("passives"),$("gearDetail"),game.weaponSlots,game.passiveSlots);
+    renderGearPreview(cs,ps);
   }
 }
 
@@ -829,18 +959,20 @@ function movePlayer(time) {
   const dy=Number(held.has("s"))-Number(held.has("w"));
   const x=dx||dy?dx:touch?.dx||0, y=dx||dy?dy:touch?.dy||0;
   const moving=Math.hypot(x,y);
+  const startX=p.x, startY=p.y;
   if(moving>.02){
     const speed=TREE.speed*(1+[0,.08,.12,.16][passiveLevel("stride")]);
-    p.x+=x/Math.max(1,moving)*speed*time;
-    p.y+=y/Math.max(1,moving)*speed*time;
-    p.moveAngle=Math.atan2(y,x);
+    const step=speed*time/Math.max(1,moving);
+    moveOnField(p,x*step,y*step,TREE.hitRadius,24);
+  }
+  if(p.x!==startX || p.y!==startY){
+    p.moveAngle=Math.atan2(p.y-startY,p.x-startX);
     p.rootTime=0;
     p.walking+=time*5;
   } else {
     p.rootTime+=time;
     p.walking=0;
   }
-  inBounds(p,24);
   p.rooted=p.rootTime>=[1.2,1,.8,.6][passiveLevel("roots")];
   p.lit=sunlit(p,game.time);
   p.hit=Math.max(0,p.hit-time);
@@ -958,8 +1090,9 @@ function spawn(type,close=false) {
   const base=enemyTypes[type];
   const angle=rand(0,TAU);
   const dist=close?rand(188,240):clamp(Math.min(c.w,c.h)/2+60,235,385);
-  const start=movePoint(p,angle,dist);
-  inBounds(start,24);
+  const candidate=movePoint(p,angle,dist);
+  inBounds(candidate,Math.max(24,base.r+1));
+  const start=openFieldPoint(candidate,base.r+1);
   const scale=type==="final"?1:enemyHealthMultiplier(game.time);
   const hp=Math.round(base.hp*scale);
   const item={
@@ -1049,18 +1182,19 @@ function moveEnemies(dt) {
       if(game.time>=e.windup.ends) fireEnemy(e,e.windup);
     } else if(e.dashLeft>0){
       e.dashLeft-=dt;
-      e.x+=Math.cos(e.face)*172*dt;
-      e.y+=Math.sin(e.face)*172*dt;
+      moveOnField(e,Math.cos(e.face)*172*dt,Math.sin(e.face)*172*dt,e.r);
     } else if(e.held<=0){
-      e.face=heading(e,p);
       const stop=e.type==="shot"?84:(e.type==="shade"?47:TREE.hitRadius+e.r-2);
       if(dist>stop){
-        const step=Math.min(dist-stop,e.speed*(e.slowed?.45:1)*dt);
-        e.x+=Math.cos(e.face)*step;
-        e.y+=Math.sin(e.face)*step;
+        const goal=openFieldPoint(p,e.r);
+        const waypoint=droneWaypoint(e,goal);
+        const step=Math.min(distance(e,waypoint),waypoint===goal?dist-stop:Infinity,e.speed*(e.slowed?.45:1)*dt);
+        if(step>0){
+          e.face=heading(e,waypoint);
+          moveOnField(e,Math.cos(e.face)*step,Math.sin(e.face)*step,e.r);
+        }
       }
     }
-    inBounds(e,e.r+1);
     if(distance(p,e)<TREE.hitRadius+e.r) hurtPlayer(e.damage);
   }
 }
@@ -1131,8 +1265,7 @@ function nearest(from,range,config={}) {
 }
 
 function push(enemy,angle,amount) {
-  Object.assign(enemy,movePoint(enemy,angle,amount));
-  inBounds(enemy,enemy.r+1);
+  moveOnField(enemy,Math.cos(angle)*amount,Math.sin(angle)*amount,enemy.r);
 }
 
 function dotDistance(a,b,e) {
@@ -1758,7 +1891,7 @@ function drawMinimap(c) {
   const xOnMap=x=>left+(x-c.x)*scale;
   const yOnMap=y=>top+(y-c.y)*scale;
 
-  const overlay=portraitLayout.matches;
+  const overlay=compactLayout.matches;
   mapPaint.clearRect(0,0,map.width,map.height);
   mapPaint.fillStyle=overlay?"#14231d88":"#14231d";
   mapPaint.fillRect(0,0,map.width,map.height);
@@ -1771,7 +1904,9 @@ function drawMinimap(c) {
   mapPaint.fillStyle="#bda34465";
   mapPaint.fillRect(xOnMap(sunAt(game.time)-LIGHT_WIDTH/2),top,LIGHT_WIDTH*scale,height*scale);
   mapPaint.fillStyle="#779481";
-  for(const [x,y] of LANDMARKS) mapPaint.fillRect(xOnMap(x-33),yOnMap(y-12),66*scale,36*scale);
+  for(const {x:[left,right],y:[top,bottom]} of OBSTACLES){
+    mapPaint.fillRect(xOnMap(left),yOnMap(top),(right-left)*scale,(bottom-top)*scale);
+  }
 
   const visibleEnemies=game.enemies.filter(enemy=>enemy.hp>0 &&
     enemy.x>=c.x && enemy.x<=c.x+width && enemy.y>=c.y && enemy.y<=c.y+height);
@@ -1819,7 +1954,7 @@ function drawFrame(now) {
     scene(c,game?.time??Math.min(20,coverTime/3));
     if(game){
       drawBattle();
-      if(!compactLayout.matches||portraitLayout.matches||$("minimapPanel").dataset.expanded==="true") drawMinimap(c);
+      drawMinimap(c);
     } else {
       const foreground={x:c.x+c.w*(view.w<=560?.54:.71),y:c.y+c.h*(view.w<=560?.30:.50)};
       outlinedCircle(foreground,116,"#e8d99562",2);
@@ -1904,9 +2039,8 @@ $("start").addEventListener("click",start);
 $("help").addEventListener("click",()=>help("cover"));
 $("mapButton").addEventListener("click",openMap);
 $("pause").addEventListener("click",pauseMenu);
-$("minimapToggle").addEventListener("click",toggleMinimap);
 $("gearButton").addEventListener("click",openGear);
-portraitLayout.addEventListener("change",placeMinimap);
+compactLayout.addEventListener("change",placeMinimap);
 placeMinimap();
 renderEquipment($("weapons"),$("passives"),$("gearDetail"),{leaf:{level:1,evolved:false}},{});
 new ResizeObserver(fit).observe(canvas);
